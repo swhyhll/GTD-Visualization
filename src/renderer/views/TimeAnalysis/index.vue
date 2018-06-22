@@ -1,5 +1,5 @@
 <template>
-<div class='time-analysis-container' v-loading="loading" element-loading-text="Loading data...">
+<div class='time-analysis-container' v-loading="loading" element-loading-text="Loading Data...">
   <div 
   class="fixed-normal datepicker-view"
   :class="{'fixed-silebar-visiable': sidebar.opened}">
@@ -98,6 +98,11 @@
   <div slot="header" 
   class="card-header" >
     <span>Attack Record</span>
+    <a v-for="(item,index) in search" :key="index" href="javascript:void(0)" 
+     @click="open(item.url+detailData.group)"
+     class="card-search-button">
+      <img :src=item.icon style="width:3vh;height:3vh;margin-left:10px;"></img>
+    </a>
   </div>
   <div class="card-item-name">Time</div>
   <div class="card-item-str">{{detailData.time}}</div>
@@ -123,12 +128,15 @@
 </template>
 
 <script>
+import { shell } from 'electron'
 import { mapGetters } from 'vuex'
 import TimeAnalysisMapView from '@/components/MapView/TimeAnalysisMapView'
 import regionCountBar from '@/components/Charts/regionCountBar'
 import countryScatter from '@/components/Charts/countryScatter'
 import country3ModelRadar from '@/components/Charts/country3ModelRadar'
 import { getRegion, getGeneral2, getCountry, getGlobalStatistics, getCountryById, getStatistics, getEventById } from '@/api/timeAnalysisApi'
+import { currentId } from 'async_hooks'
+// import { constants } from 'http2'
 
 export default {
   components: {
@@ -143,12 +151,12 @@ export default {
       geoJSONForDisplay: {},
       pointsForDisplay: {},
       statisticsData: [],
-      currentMode: 'global',
       selectedElement: -1,
       lossData: {kill: 0, wound: 0, prop: 0},
       loading: true,
       countryList: [],
-      displayMode: 'global',
+      currentRegion: 0,
+      currentCountry: 0,
       detailData: {
         time: '2010-10-20',
         place: 'Ankara, Turkey',
@@ -160,13 +168,21 @@ export default {
         woundeds: 0,
         summary: 'No record.',
         prop: 'No record.'
-      }
+      },
+      search: [
+        {icon: 'static/icons/Baidu.png', url: 'https://www.baidu.com/s?wd='},
+        {icon: 'static/icons/Bing.png', url: 'https://cn.bing.com/search?q='},
+        {icon: 'static/icons/Google.png', url: 'https://www.google.com/search?q='}
+      ]
     }
   },
   computed: {
     ...mapGetters([
       'sidebar'
     ]),
+    currentMode () {
+      return this.$store.state.app.timeAnalysisMode.mode
+    },
     startTime: function () {
       return this.dateRange[0]
     },
@@ -174,28 +190,28 @@ export default {
       return this.dateRange[1]
     },
     regionCountBarDisplay: function () {
-      if (this.displayMode === 'global') {
+      if (this.currentMode === 'global') {
         return true
       } else {
         return false
       }
     },
     countryScatterDisplay: function () {
-      if (this.displayMode === 'region') {
+      if (this.currentMode === 'region') {
         return true
       } else {
         return false
       }
     },
     singleCountryChartsDisplay: function () {
-      if (this.displayMode === 'country') {
+      if (this.currentMode === 'country') {
         return true
       } else {
         return false
       }
     },
     detailDisplay: function () {
-      if (this.displayMode === 'detail') {
+      if (this.currentMode === 'detail') {
         return true
       } else {
         return false
@@ -204,7 +220,11 @@ export default {
   },
   mounted () {
     this.$changeLayout()
+    this.$store.dispatch('changeTimeAnalysisMode', {mode: 'global', display: [], enable: true})
     this.initGlobalView()
+  },
+  destoryed () {
+    this.$store.dispatch('changeTimeAnalysisMode', {mode: 'global', display: [], enable: false})
   },
   methods: {
     initGlobalView () {
@@ -244,7 +264,6 @@ export default {
         })
     },
     initRegionView (regionId) {
-      this.currentMode = 'region'
       // console.log(this.pointsForDisplay.features.length)
       // const tmp = this.pointsForDisplay.features.filter(feature => {
       //   return feature.properties.country.region === regionId
@@ -274,14 +293,14 @@ export default {
         }
         this.selectedElement = countries[0].id
         this.countryList = countries
-        this.displayMode = 'region'
       }).catch(() => {
       })
     },
     initCountryView (countryId) {
       this.statisticsData = {}
-      this.currentMode = 'country'
-      this.displayMode = 'country'
+      // this.pointsForDisplay.features = this.pointsForDisplay.features.filter(feature => {
+      //   return feature.properties.country.region === countryId
+      // })
       // console.log(this.pointsForDisplay.features.length)
       // const tmp = this.pointsForDisplay.features.filter(feature => {
       //   return feature.properties.country.region === countryId
@@ -326,8 +345,7 @@ export default {
       getEventById(eventId, {
         format: 'json'
       }).then(response => {
-        this.currentMode = 'detail'
-        this.displayMode = 'detail'
+        this.$store.dispatch('changeTimeAnalysisMode', {mode: 'detail', display: [...this.$store.state.app.timeAnalysisMode.display, 'Detail'], enable: true})
         this.pointsForDisplay = response.data
         const detail = response.data.properties
         if (detail.data !== null) {
@@ -377,9 +395,24 @@ export default {
     },
     clickListener (elementId) {
       if (this.currentMode === 'global') {
-        this.initRegionView(elementId)
+        this.currentRegion = elementId
+        // console.log(elementId)
+        // console.log(this.geoJSONForDisplay)
+        const regionName = this.geoJSONForDisplay.features.find(feature => {
+          return feature.id === this.currentRegion
+        }).properties.regionName
+        console.log(regionName)
+        this.$store.dispatch('changeTimeAnalysisMode', {mode: 'region', display: [regionName], enable: true})
+        // this.initRegionView(elementId)
       } else if (this.currentMode === 'region') {
-        this.initCountryView(elementId)
+        this.currentCountry = elementId
+        const that = this
+        this.$store.dispatch('changeTimeAnalysisMode', {mode: 'country',
+          display: [...that.$store.state.app.timeAnalysisMode.display, that.countryList.find(x => {
+            return x.id === this.currentCountry
+          }).name],
+          enable: true})
+        // this.initCountryView(elementId)
       } else if (this.currentMode === 'country') {
         this.initDetailView(elementId)
       }
@@ -391,16 +424,29 @@ export default {
       this.selectedElement = -1
     },
     backToHome () {
-      this.currentMode = 'global'
-      this.displayMode = 'global'
+      this.$store.dispatch('changeTimeAnalysisMode', {mode: 'global', display: [], enable: true})
       this.loading = true
       this.initGlobalView()
+    },
+    open (url) {
+      shell.openExternal(url)
+    }
+  },
+  watch: {
+    currentMode (newMode, oldMode) {
+      if (newMode === 'region') {
+        this.initRegionView(this.currentRegion)
+      } else if (newMode === 'country') {
+        this.initCountryView(this.currentCountry)
+      }
     }
   }
 }
 </script>
 
 <style lang="scss" scoped>
+@import '../../styles/variables.scss';
+
 .time-analysis-container{
   width: 100%;
   height: 100%;
@@ -463,19 +509,25 @@ export default {
     background-color: transparent;
     width: 350px!important;
     height: 60%!important;
-    border-color: orange;
+    border-color: $bg-4;
     border-width: 0px!important;
-    box-shadow: 0 0 20px orange!important;
+    box-shadow: 0 0 20px $bg-4!important;
     border-radius: 10px;
     .card-header {
       font-family: Arial, Helvetica, sans-serif!important;
       font-size: 25px;
-      color: orange;
+      color: $bg-4;
       text-align: left;
       font-weight: 700;
+      display: flex;
+      .card-search-button {
+        width: 5vh;
+        height: 5vh;
+        content: 'static/icons/Baidu.png';
+      }
     }
     .card-item-name{
-      color: orangered;
+      color: $bg-3;
       font-family: Arial, Helvetica, sans-serif;
       font-weight: 700;
       font-size: 25px;
@@ -483,7 +535,7 @@ export default {
       margin-bottom: 35px;
     }
     .card-item-num{
-      color: orange;
+      color: $bg-4;
       font-family: Arial, Helvetica, sans-serif;
       font-weight: 700;
       font-size: 25px;
@@ -499,28 +551,29 @@ export default {
     background-color: transparent;
     width: 350px!important;
     height: 86%!important;
-    border-color: orange;
+    border-color: $bg-4;
     border-width: 0px!important;
-    box-shadow: 0 0 20px orange!important;
+    box-shadow: 0 0 20px $bg-4!important;
     position: fixed;
     z-index: 999;
     border-radius: 10px;
     .card-header {
       font-family: 'STXihei'!important;
       font-size: 25px;
-      color: orange;
+      color: $bg-4;
       text-align: left;
       font-weight: 700;
+      display: flex;
     }
     .card-item-name{
-      color: orange;
+      color: $bg-4;
       font-family: Helvetica;
       font-size: 25px;
       margin-top: 2px;
       margin-bottom: 2px;
     }
     .card-item-str{
-      color: orangered;
+      color: $bg-3;
       font-family: Arial, Helvetica, sans-serif;
       font-size: 20px;
       margin-top: 2px;
@@ -528,7 +581,7 @@ export default {
       text-align: right;
     }
     .card-item-text{
-      color: orangered;
+      color: $bg-3;
       font-family: Arial, Helvetica, sans-serif;
       font-size: 15px;
       margin-top: 2px;
